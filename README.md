@@ -17,8 +17,8 @@ are going to install a few more tools which we might need.
 
 | Operating System  | Command to Install GCC and Build Essentials  |
 |-------------------|----------------------------------------------|
-| Debian-based      | `sudo apt install build-essential nasm`      |
-| Fedora-based      | `sudo dnf install gcc gcc-c++ make nasm`     |
+| Debian-based      | `sudo apt install build-essential`      |
+| Fedora-based      | `sudo dnf install gcc gcc-c++ make`     |
 
 #### 2. CMake
 

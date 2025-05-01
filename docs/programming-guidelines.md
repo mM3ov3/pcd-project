@@ -4,16 +4,6 @@ They are more suggestions than rules.
 These are C-based rules. For Python, anything goes, but try to follow some of
 these guidelines if possible.
 
-## Table of Contents
-
-1. [Tabs](#tabs)
-2. [Whitespaces](#whitespaces)
-3. [Max width in columns](#max-width-in-columns)
-4. [Naming conventions](#naming-conventions)
-5. [Brackets](#brackets)
-6. [Comments](#comments)
-7. [Header and source files](#header-and-source-files)
-
 ## 1. Tabs
 
 Please use hard tabs for indentation, no spaces. Most editors ("Indent using
