@@ -16,18 +16,21 @@ void *upload_thread_func(void *arg) {
         return NULL;
     }
 
+    // Set up server address
     struct sockaddr_in serv_addr = {0};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(SERVER_PORT + 1);
 
-    if (bind(listen_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) {
+    // Bind socket
+    if (bind(listen_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("bind");
         close(listen_fd);
         return NULL;
     }
 
-    if (listen(listen_fd, MAX_UPLOADS)) {
+    // Listen for connections
+    if (listen(listen_fd, MAX_UPLOADS) < 0) {
         perror("listen");
         close(listen_fd);
         return NULL;
@@ -55,11 +58,12 @@ void *upload_thread_func(void *arg) {
                 continue;
             }
 
-            // Create file
+            // Create file path
             char file_path[256];
             snprintf(file_path, sizeof(file_path), 
                     "processing/%.16s_%u/%s", job->client_id, job->job_id, job->filename);
             
+            // Create file
             int file_fd = open(file_path, O_WRONLY | O_CREAT, 0644);
             if (file_fd < 0) {
                 perror("open");
@@ -68,21 +72,22 @@ void *upload_thread_func(void *arg) {
                 continue;
             }
 
-            // Read file data and write to disk
+            // Transfer file data
             char buffer[4096];
             ssize_t bytes_read;
             while ((bytes_read = read(conn_fd, buffer, sizeof(buffer))) > 0) {
-                write(file_fd, buffer, bytes_read);
+                if (write(file_fd, buffer, bytes_read) < 0) {
+                    perror("write");
+                    break;
+                }
             }
 
             // Cleanup
             close(file_fd);
             close(conn_fd);
             free(job);
-
-            // TODO: Update pending job status
         } else {
-            usleep(100000); // 100ms sleep if no jobs
+            usleep(100000); // Sleep for 100ms if no jobs
         }
     }
 

@@ -1,7 +1,7 @@
 CC=gcc
-CFLAGS=-Wall -Wextra -pthread
+CFLAGS=-Wall -Wextra -pthread -I../common
 LDFLAGS=-luuid
-SRC=server.c client_thread.c upload_thread.c hashmap.c minheap.c
+SRC=server.c client_thread.c upload_thread.c hashmap.c minheap.c ../common/utils.c
 OBJ=$(SRC:.c=.o)
 TARGET=server
 

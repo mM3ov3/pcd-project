@@ -28,7 +28,7 @@ int server_init() {
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(SERVER_PORT);
 
-    if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) {
+    if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("bind failed");
         close(sockfd);
         return -1;
@@ -39,7 +39,7 @@ int server_init() {
     minheap_init(&upload_queue, MAX_UPLOADS * 2);
 
     // Create upload thread
-    if (pthread_create(&upload_thread, NULL, upload_thread_func, NULL)) {
+    if (pthread_create(&upload_thread, NULL, upload_thread_func, NULL) != 0) {
         perror("Failed to create upload thread");
         return -1;
     }
@@ -115,4 +115,16 @@ void server_cleanup() {
     minheap_free(&upload_queue);
     pthread_cancel(upload_thread);
     pthread_join(upload_thread, NULL);
+}
+
+int main() {
+    if (server_init() != 0) {
+        fprintf(stderr, "Server initialization failed\n");
+        return 1;
+    }
+    
+    server_run();
+    server_cleanup();
+    
+    return 0;
 }

@@ -4,6 +4,10 @@
 #include "protocol.h"
 #include <pthread.h>
 #include <stdbool.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define BUFFER_SIZE 4096
 
 typedef struct {
     uint8_t client_id[16];
@@ -37,8 +41,13 @@ typedef struct {
     pthread_mutex_t lock;
 } MinHeap;
 
+typedef struct HashMapNode {
+    ClientInfo client;
+    struct HashMapNode *next;
+} HashMapNode;
+
 typedef struct {
-    PendingJob **buckets;
+    HashMapNode **buckets;
     size_t bucket_count;
     size_t size;
     pthread_mutex_t lock;
@@ -57,5 +66,25 @@ void cleanup_dead_clients();
 // Job management
 void handle_job_request(JobReq *req, struct sockaddr_in *client_addr);
 void handle_upload_request(UploadReq *req, struct sockaddr_in *client_addr);
+
+// HashMap functions
+void hashmap_init(ClientHashMap *map);
+void hashmap_put(ClientHashMap *map, ClientInfo *client);
+ClientInfo *hashmap_get(ClientHashMap *map, uint8_t client_id[16]);
+void hashmap_remove(ClientHashMap *map, uint8_t client_id[16]);
+void hashmap_free(ClientHashMap *map);
+
+// MinHeap functions
+void minheap_init(MinHeap *heap, int capacity);
+void minheap_push(MinHeap *heap, UploadJob *job);
+UploadJob *minheap_pop(MinHeap *heap);
+void minheap_free(MinHeap *heap);
+
+void *upload_thread_func(void *arg);
+
+extern int sockfd;
+extern ClientHashMap client_map;
+extern MinHeap upload_queue;
+extern pthread_t upload_thread;
 
 #endif // SERVER_H
