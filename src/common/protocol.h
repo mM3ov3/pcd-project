@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define SERVER_PORT 9090
+#define SERVER_PORT 5555
 #define MAX_UPLOADS 10
 #define HEARTBEAT_TIMEOUT 30
 #define HEARTBEAT_INTERVAL 10

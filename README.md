@@ -30,7 +30,26 @@ generator.
 | Debian-based      | `sudo apt install cmake`  |
 | Fedora-based      | `sudo dnf install cmake`  |
 
-#### 3. Build, baby, build
+#### 3. Installing Libraries
+
+We are going to need some external libraries, but they should be easily installed 
+with a package manager:
+
+| Operating System  | Command to Install libraries  |
+|-------------------|-----------------------------|
+| Debian-based      | `sudo apt install libuuid1 uuid-dev`  |
+| Fedora-based      | `sudo dnf install libuuid-devel` |
+
+##### Example: Installing `libuuid` (UUID support)
+
+This library is needed for generating and handling UUIDs. Here’s how to install it:
+
+| Operating System  | Command to Install libuuid  |
+|-------------------|-----------------------------|
+| Debian-based      | `sudo apt install libuuid1 libuuid-dev`  |
+| Fedora-based      | `sudo dnf install libuuid-devel` |
+
+#### 4. Build, baby, build
 
 Just run the `build.sh` script. 
 

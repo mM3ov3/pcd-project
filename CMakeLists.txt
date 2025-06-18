@@ -33,6 +33,13 @@ file(GLOB C_ADMIN_CLIENT_SOURCES
     ${SRC_DIR}/c-admin-client/*.c
 )
 
+# ========================================
+# FIND AND LINK EXTERNAL LIBS (STATIC)
+# ========================================
+
+# Find the libuuid library (installed system-wide)
+find_library(UUID_LIB NAMES uuid)
+
 
 # ========================================
 # BUILD COMMON LIB (STATIC)
@@ -42,6 +49,8 @@ file(GLOB C_ADMIN_CLIENT_SOURCES
 add_library(common STATIC ${COMMON_SOURCES})
 # Specify the public include directories for common
 target_include_directories(common PUBLIC ${SRC_DIR}/common)
+# Link external libs here
+target_link_libraries(common PUBLIC ${UUID_LIB})
 
 
 # ========================================
@@ -51,7 +60,6 @@ target_include_directories(common PUBLIC ${SRC_DIR}/common)
 # SERVER TARGET AND LINKING
 # Define server executable
 add_executable(server ${SERVER_SOURCES})
-
 # Link server to necessary libs
 target_link_libraries(server 
 	common)
