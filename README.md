@@ -40,14 +40,9 @@ with a package manager:
 | Debian-based      | `sudo apt install libuuid1 uuid-dev libcurl4-openssl-dev`  |
 | Fedora-based      | `sudo dnf install libuuid-devel libcurl-devel` |
 
-##### Example: Installing `libuuid` (UUID support)
-
-This library is needed for generating and handling UUIDs. Here’s how to install it:
-
-| Operating System  | Command to Install libuuid  |
-|-------------------|-----------------------------|
-| Debian-based      | `sudo apt install libuuid1 libuuid-dev`  |
-| Fedora-based      | `sudo dnf install libuuid-devel` |
+External libraries used this far:
+- uuid
+- curl
 
 #### 4. Build, baby, build
 
