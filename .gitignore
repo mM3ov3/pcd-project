@@ -67,3 +67,5 @@ Thumbs.db
 *.idb
 *.pdb
 
+# Vim swap files
+*.swp

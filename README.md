@@ -37,8 +37,8 @@ with a package manager:
 
 | Operating System  | Command to Install libraries  |
 |-------------------|-----------------------------|
-| Debian-based      | `sudo apt install libuuid1 uuid-dev`  |
-| Fedora-based      | `sudo dnf install libuuid-devel` |
+| Debian-based      | `sudo apt install libuuid1 uuid-dev libcurl4-openssl-dev`  |
+| Fedora-based      | `sudo dnf install libuuid-devel libcurl-devel` |
 
 ##### Example: Installing `libuuid` (UUID support)
 

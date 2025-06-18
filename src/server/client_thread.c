@@ -1,5 +1,5 @@
 #include "server.h"
-#include "../common/utils.h"
+#include "utils.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -114,7 +114,7 @@ void handle_upload_request(UploadReq *req, struct sockaddr_in *client_addr) {
         .message_id = req->message_id,
         .name_len = req->name_len,
         .status = 1, // Accepted
-        .ip_address = 0, // TODO: Get server IP
+        .ip_address = get_public_ip(),
         .tcp_port = SERVER_PORT + 1 // Different port for uploads
     };
     strncpy(ack.file_name, req->filename, MAX_FILENAME_LEN);
