@@ -34,7 +34,6 @@ int client_init(PCDClient *client, const char *server_ip) {
 }
 
 int request_client_id(PCDClient *client) {
-    // Implementation example:
     ClientIdReq req = {
         .type = CLIENT_ID_REQ,
         .message_id = 1
@@ -46,8 +45,34 @@ int request_client_id(PCDClient *client) {
         return -1;
     }
 
-    // Add response handling logic here
-    return 0;
+    // Wait for response
+    struct pollfd fds[1];
+    fds[0].fd = client->udp_sock;
+    fds[0].events = POLLIN;
+
+    char buffer[BUFFER_SIZE];
+    int ret = poll(fds, 1, 5000); // 5 second timeout
+    if (ret <= 0) {
+        printf("Timeout waiting for client ID\n");
+        return -1;
+    }
+
+    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
+    if (n < 0) {
+        perror("recvfrom");
+        return -1;
+    }
+
+    if (n >= (ssize_t)sizeof(ClientIdAck) && buffer[0] == CLIENT_ID_ACK) {
+        ClientIdAck *ack = (ClientIdAck *)buffer;
+        memcpy(client->client_id, ack->client_id, 16);
+        client->connected = true;  // THIS WAS MISSING
+        printf("Received client ID from server\n");
+        return 0;
+    }
+
+    printf("Invalid response from server\n");
+    return -1;
 }
 
 void client_cleanup(PCDClient *client) {
