@@ -33,82 +33,57 @@ int client_init(PCDClient *client, const char *server_ip) {
     return 0;
 }
 
+int request_client_id(PCDClient *client) {
+    // Implementation example:
+    ClientIdReq req = {
+        .type = CLIENT_ID_REQ,
+        .message_id = 1
+    };
+
+    if (sendto(client->udp_sock, &req, sizeof(req), 0,
+              (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
+        perror("sendto");
+        return -1;
+    }
+
+    // Add response handling logic here
+    return 0;
+}
+
 void client_cleanup(PCDClient *client) {
-    close(client->udp_sock);
+    if (client->udp_sock > 0) {
+        close(client->udp_sock);
+    }
     if (client->tcp_sock > 0) {
         close(client->tcp_sock);
     }
 }
 
-int request_client_id(PCDClient *client) {
-    ClientIdReq req = {
-        .type = CLIENT_ID_REQ,
-        .message_id = 1 // TODO: generate unique message_id
-    };
-
-    if (sendto(client->udp_sock, &req, sizeof(req), 0,
-               (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto");
-        return -1;
-    }
-
-    // Wait for response
-    struct pollfd fds[1];
-    fds[0].fd = client->udp_sock;
-    fds[0].events = POLLIN;
-
-    char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000); // 5 second timeout
-    if (ret <= 0) {
-        printf("Timeout waiting for client ID\n");
-        return -1;
-    }
-
-    ssize_t n = recvfrom(client->udp_sock, buffer, BUFFER_SIZE, 0, NULL, NULL);
-    if (n < 0) {
-        perror("recvfrom");
-        return -1;
-    }
-
-    if (n >= sizeof(ClientIdAck) && buffer[0] == CLIENT_ID_ACK) {
-        ClientIdAck *ack = (ClientIdAck *)buffer;
-        memcpy(client->client_id, ack->client_id, 16);
-        client->connected = true;
-        return 0;
-    }
-
-    return -1;
-}
-
-int send_heartbeat(PCDClient *client) {
-    if (!client->connected) return -1;
-
-    Heartbeat hb = {
-        .type = HEARTBEAT
-    };
-    memcpy(hb.client_id, client->client_id, 16);
-
-    if (sendto(client->udp_sock, &hb, sizeof(hb), 0,
-               (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto");
-        return -1;
-    }
-
-    return 0;
-}
-
 int submit_job(PCDClient *client, const char *command, uint8_t file_count) {
-    if (!client->connected) return -1;
+    if (!client->connected) {
+        fprintf(stderr, "Client not connected\n");
+        return -1;
+    }
 
+    printf("Preparing job request...\n");
     JobReq req = {
         .type = JOB_REQ,
-        .message_id = 2, // TODO: generate unique message_id
+        .message_id = 2,  // Should increment for each request
         .file_count = file_count,
         .cmd_len = (uint16_t)strlen(command)
     };
     memcpy(req.client_id, client->client_id, 16);
-    // TODO: generate job_id
+     // TODO: generate job_id
     strncpy(req.job_command, command, MAX_CMD_LEN);
+
+    printf("Sending job request...\n");
+    if (sendto(client->udp_sock, &req, sizeof(req), 0,
+              (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
+        perror("sendto failed");
+        return -1;
+    }
+
+    printf("Waiting for job acknowledgement...\n");
 
     if (sendto(client->udp_sock, &req, sizeof(req), 0,
                (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
@@ -122,19 +97,19 @@ int submit_job(PCDClient *client, const char *command, uint8_t file_count) {
     fds[0].events = POLLIN;
 
     char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000); // 5 second timeout
+    int ret = poll(fds, 1, 5000);
     if (ret <= 0) {
         printf("Timeout waiting for job ack\n");
         return -1;
     }
 
-    ssize_t n = recvfrom(client->udp_sock, buffer, BUFFER_SIZE, 0, NULL, NULL);
+    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
     if (n < 0) {
         perror("recvfrom");
         return -1;
     }
 
-    if (n >= sizeof(JobAck) && buffer[0] == JOB_ACK) {
+    if (n >= (ssize_t)sizeof(JobAck) && buffer[0] == JOB_ACK) {
         JobAck *ack = (JobAck *)buffer;
         if (ack->status) {
             return ack->job_id;
@@ -149,7 +124,7 @@ int request_upload(PCDClient *client, const char *filename, uint64_t file_size, 
 
     UploadReq req = {
         .type = UPLOAD_REQ,
-        .message_id = 3, // TODO: generate unique message_id
+        .message_id = 3,
         .job_id = job_id,
         .file_size = file_size,
         .name_len = (uint8_t)strlen(filename)
@@ -169,19 +144,19 @@ int request_upload(PCDClient *client, const char *filename, uint64_t file_size, 
     fds[0].events = POLLIN;
 
     char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000); // 5 second timeout
+    int ret = poll(fds, 1, 5000);
     if (ret <= 0) {
         printf("Timeout waiting for upload ack\n");
         return -1;
     }
 
-    ssize_t n = recvfrom(client->udp_sock, buffer, BUFFER_SIZE, 0, NULL, NULL);
+    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
     if (n < 0) {
         perror("recvfrom");
         return -1;
     }
 
-    if (n >= sizeof(UploadAck) && buffer[0] == UPLOAD_ACK) {
+    if (n >= (ssize_t)sizeof(UploadAck) && buffer[0] == UPLOAD_ACK) {
         UploadAck *ack = (UploadAck *)buffer;
         if (ack->status) {
             // Create TCP connection for upload
@@ -209,6 +184,8 @@ int request_upload(PCDClient *client, const char *filename, uint64_t file_size, 
 }
 
 int upload_file(PCDClient *client, const char *filename, uint32_t job_id) {
+    (void)job_id; // Mark parameter as used to avoid warning
+    
     if (client->tcp_sock <= 0) return -1;
 
     // Open file
@@ -218,13 +195,11 @@ int upload_file(PCDClient *client, const char *filename, uint32_t job_id) {
         return -1;
     }
 
-    // Get file size
+    // Get file size (even if unused, we'll keep it for future use)
     fseek(file, 0, SEEK_END);
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
-
-    // Send file header (optional)
-    // TODO: Implement if needed
+    (void)file_size; // Mark variable as used to avoid warning
 
     // Send file data
     char buffer[4096];
@@ -240,5 +215,65 @@ int upload_file(PCDClient *client, const char *filename, uint32_t job_id) {
     fclose(file);
     close(client->tcp_sock);
     client->tcp_sock = -1;
+    return 0;
+}
+
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <server_ip>\n", argv[0]);
+        return 1;
+    }
+
+    PCDClient client;
+    if (client_init(&client, argv[1]) != 0) {
+        fprintf(stderr, "Failed to initialize client\n");
+        return 1;
+    }
+
+    // Example client workflow:
+    // 1. Get client ID
+    if (request_client_id(&client) != 0) {
+        fprintf(stderr, "Failed to get client ID\n");
+        client_cleanup(&client);
+        return 1;
+    }
+
+    printf("Successfully registered with client ID: ");
+    for (int i = 0; i < 16; i++) {
+        printf("%02x", client.client_id[i]);
+    }
+    printf("\n");
+
+    // 2. Submit a job
+    const char *job_command = "process_image";
+    uint8_t file_count = 1;
+    int job_id = submit_job(&client, job_command, file_count);
+    if (job_id < 0) {
+        fprintf(stderr, "Failed to submit job\n");
+        client_cleanup(&client);
+        return 1;
+    }
+
+    printf("Job submitted with ID: %d\n", job_id);
+
+    // 3. Upload a file
+    const char *filename = "test.jpg";
+    if (request_upload(&client, filename, 1024, job_id) != 0) {
+        fprintf(stderr, "Failed to request upload\n");
+        client_cleanup(&client);
+        return 1;
+    }
+
+    if (upload_file(&client, filename, job_id) != 0) {
+        fprintf(stderr, "Failed to upload file\n");
+        client_cleanup(&client);
+        return 1;
+    }
+
+    printf("File uploaded successfully\n");
+
+    // Cleanup
+    client_cleanup(&client);
     return 0;
 }

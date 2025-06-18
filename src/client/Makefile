@@ -1,7 +1,7 @@
 CC=gcc
-CFLAGS=-Wall -Wextra
+CFLAGS=-Wall -Wextra -I../common
 LDFLAGS=-luuid
-SRC=client.c udp_client.c tcp_client.c
+SRC=client.c
 OBJ=$(SRC:.c=.o)
 TARGET=client
 

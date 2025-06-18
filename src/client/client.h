@@ -3,6 +3,10 @@
 
 #include "protocol.h"
 #include <stdbool.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define BUFFER_SIZE 4096
 
 typedef struct {
     uint8_t client_id[16];
