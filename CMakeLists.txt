@@ -7,6 +7,8 @@ project(pcd-project)
 # Set the C standard to C99 (or any other version you need)
 set(CMAKE_C_STANDARD 99)
 
+# Prefer static libraries
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ".so")
 
 # ========================================
 # FIND SOURCE FILES
@@ -34,11 +36,12 @@ file(GLOB C_ADMIN_CLIENT_SOURCES
 )
 
 # ========================================
-# FIND AND LINK EXTERNAL LIBS (STATIC)
+# FIND EXTERNAL LIBS
 # ========================================
 
 # Find the libuuid library (installed system-wide)
 find_library(UUID_LIB NAMES uuid)
+message(STATUS "UUID_LIB found at: ${UUID_LIB}")
 
 
 # ========================================
@@ -49,8 +52,12 @@ find_library(UUID_LIB NAMES uuid)
 add_library(common STATIC ${COMMON_SOURCES})
 # Specify the public include directories for common
 target_include_directories(common PUBLIC ${SRC_DIR}/common)
-# Link external libs here
-target_link_libraries(common PUBLIC ${UUID_LIB})
+# Link external libs for common here (static)
+target_link_libraries(common PUBLIC 
+	"-Wl,-Bstatic"
+		${UUID_LIB}
+	"-Wl,-Bdynamic"	
+)
 
 
 # ========================================
