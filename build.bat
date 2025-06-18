@@ -25,7 +25,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 REM Package the Python code using PyInstaller
 echo Packaging the Python client with PyInstaller...
-pyinstaller --onefile --distpath build --workpath build/py-client --specpath build/py-client src/py-client/client.py
+pyinstaller --onefile --distpath build --workpath build/py-client --specpath build/py-client src/py-client/py-client.py
 
 REM Clean up (optional)
 echo Cleaning up temporary files...
