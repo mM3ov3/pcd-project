@@ -1,7 +1,9 @@
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include "log_queue.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <errno.h>
 
 void log_queue_init(LogQueue *q) {
 	q->head = 0;

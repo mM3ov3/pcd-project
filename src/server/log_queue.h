@@ -1,3 +1,5 @@
+#ifndef LOG_QUEUE
+#define LOG_QUEUE
 #include <pthread.h>
 
 #define LOG_QUEUE_SIZE 100
@@ -15,4 +17,5 @@ typedef struct {
 
 void log_queue_init(LogQueue *q);
 void log_queue_push(LogQueue *q, const char *entry);
-void log_queue_pop_timed(LogQueue *q, char *buffer, int timeout_ms);
+int log_queue_pop_timed(LogQueue *q, char *buffer, int timeout_ms);
+#endif

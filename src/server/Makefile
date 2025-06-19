@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pthread -I../shared
-SRC = server.c job_handler.c upload_handler.c processing.c
+SRC = server.c job_handler.c upload_handler.c processing.c admin_handler.c log_queue.c
 OBJ = $(SRC:.c=.o)
 TARGET = server
 

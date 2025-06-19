@@ -28,6 +28,8 @@ typedef struct {
     pthread_cond_t cond;
 } DownloadQueue;
 
+
+
 extern ClientInfo *clients;
 extern size_t client_count;
 extern pthread_mutex_t clients_mutex;

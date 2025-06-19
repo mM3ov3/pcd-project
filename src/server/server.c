@@ -16,6 +16,8 @@
 #include "upload_handler.h"
 #include "processing.h"
 #include "server.h"
+#include "admin_handler.h"
+#include "log_queue.h"
 
 #define MAX_EVENTS 10
 #define BUFFER_SIZE 2048
@@ -24,6 +26,7 @@ ClientInfo *clients = NULL;
 size_t client_count = 0;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 DownloadQueue download_queue = {0};
+LogQueue global_log_queue;
 
 void *client_thread(void *arg);
 void *watcher_thread(void *arg);
@@ -64,7 +67,7 @@ int main() {
         perror("Download socket creation failed");
         exit(EXIT_FAILURE);
     }
-    
+
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -102,18 +105,21 @@ int main() {
     init_job_handler();
     init_upload_handler(tcp_sock);
     init_processing();
+    log_queue_init(&global_log_queue);
     
-    pthread_t client_tid, watcher_tid, processing_tid, download_tid;
+    pthread_t client_tid, watcher_tid, processing_tid, download_tid, admin_tid;
     
     pthread_create(&client_tid, NULL, client_thread, &udp_sock);
     pthread_create(&watcher_tid, NULL, watcher_thread, NULL);
     pthread_create(&processing_tid, NULL, processing_thread, &udp_sock);
     pthread_create(&download_tid, NULL, download_thread, &download_sock);
+    pthread_create(&admin_tid, NULL, admin_thread, NULL);
     
     pthread_join(client_tid, NULL);
     pthread_join(watcher_tid, NULL);
     pthread_join(processing_tid, NULL);
     pthread_join(download_tid, NULL);
+    pthread_join(admin_tid, NULL);
     
     close(udp_sock);
     close(tcp_sock);
