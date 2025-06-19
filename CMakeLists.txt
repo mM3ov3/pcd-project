@@ -39,9 +39,9 @@ file(GLOB C_ADMIN_CLIENT_SOURCES
 # ========================================
 
 # Common library target (includes all common code)
-add_library(common STATIC ${COMMON_SOURCES})
+# add_library(common STATIC ${COMMON_SOURCES})
 # Specify the public include directories for common
-target_include_directories(common PUBLIC ${SRC_DIR}/common)
+# target_include_directories(common PUBLIC ${SRC_DIR}/common)
 
 
 # ========================================
@@ -60,12 +60,12 @@ target_link_libraries(server
 # Define c-admin-client executable
 add_executable(c-admin-client ${C_ADMIN_CLIENT_SOURCES})
 # Link c-admin-client to the necessary libs
-target_link_libraries(c-admin-client 
-	common)
+# target_link_libraries(c-admin-client 
+#	common)
 
 # C-CLIENT TARGET AND LINKING
 # Define c-client executable
-add_executable(c-client ${C_CLIENT_SOURCES})
+# add_executable(c-client ${C_CLIENT_SOURCES})
 # Link c-client to the necessary libs
-target_link_libraries(c-client 
-	common)
+# target_link_libraries(c-client 
+#	common)
