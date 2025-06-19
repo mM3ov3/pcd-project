@@ -16,7 +16,7 @@
 #include "menu.h"
 #include "ffmpeg_commands.h"
 
-#define SERVER_IP "192.168.1.134"
+#define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE 4096
 #define MAX_RETRIES 3
 #define UPLOAD_TIMEOUT 10
@@ -35,7 +35,7 @@ void download_file(uint32_t job_id, const char *filename);
 void send_heartbeat(void);
 void* heartbeat_thread(void *arg);
 
-int init_udp_socket() {
+int init_udp_socket(const char *ip) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("socket creation failed");
@@ -45,7 +45,7 @@ int init_udp_socket() {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
         perror("invalid server address");
         exit(EXIT_FAILURE);
     }
@@ -534,10 +534,15 @@ void process_menu_choice(int choice) {
     }
 }
 
-int main() {
+int main(int argc, char **argv) {
     srand(time(NULL));
-    sockfd = init_udp_socket();
-    download_sockfd = init_udp_socket();
+    if (argc > 1) {
+	    sockfd = init_udp_socket(argv[1]);
+	    download_sockfd = init_udp_socket(argv[1]);
+    } else {
+	    sockfd = init_udp_socket(SERVER_IP);
+	    download_sockfd = init_udp_socket(SERVER_IP);
+    }
     
     get_client_id();
     
