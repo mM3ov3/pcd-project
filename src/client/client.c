@@ -16,7 +16,7 @@
 #include "menu.h"
 #include "ffmpeg_commands.h"
 
-#define SERVER_IP "127.0.0.1"
+#define SERVER_IP "192.168.1.134"
 #define BUFFER_SIZE 4096
 #define MAX_RETRIES 3
 #define UPLOAD_TIMEOUT 10
