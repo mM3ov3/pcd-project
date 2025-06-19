@@ -67,3 +67,14 @@ Thumbs.db
 *.idb
 *.pdb
 
+# Test files
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mkv
+*.flv
+*.mov
+
+# Ignore processing folder
+src/server/processing

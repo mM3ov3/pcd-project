@@ -1,14 +1,13 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -pthread -I../common
-LDFLAGS=-luuid
-SRC=server.c client_thread.c upload_thread.c hashmap.c minheap.c ../common/utils.c
-OBJ=$(SRC:.c=.o)
-TARGET=server
+CC = gcc
+CFLAGS = -Wall -Wextra -pthread -I../shared
+SRC = server.c job_handler.c upload_handler.c processing.c
+OBJ = $(SRC:.c=.o)
+TARGET = server
 
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
