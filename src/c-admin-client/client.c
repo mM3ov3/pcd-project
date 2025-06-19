@@ -14,29 +14,6 @@
 volatile sig_atomic_t in_log_mode = 0;
 int sockfd_global = -1;
 
-void helper() 
-{
-	printf("\nAvailable admin commands:\n");
-	printf("  HELP\n");
-	printf("      Show this help message.\n\n");
-	printf("  SHOW_CLIENTS\n");
-	printf("      List all currently connected clients.\n\n");
-	printf("  SHOW_QUEUE\n");
-	printf("      Display the processing queue.\n\n");
-	printf("  KICK_CLIENT <client_id>\n");
-	printf("      Disconnect a specific client by ID.\n\n");
-	printf("  SET_MAX_UPLOADS <number>\n");
-	printf("      Set the maximum number of simultaneous uploads.\n\n");
-	printf("  SET_MAX_DOWNLOADS <number>\n");
-	printf("      Set the maximum number of simultaneous downloads.\n\n");
-	printf("  SHOW_LOGS\n");
-	printf("      Stream logs from the server in real-time (tail -f style).\n\n");
-	printf("  STOP_LOGS\n");
-	printf("      Stop receiving real-time log updates (if supported by server).\n\n");
-	printf("  EXIT or CTRL+D\n");
-	printf("      Exit the admin client.\n\n");
-}
-
 void handle_sigint(int sig) 
 {
 	if (in_log_mode) {
@@ -53,7 +30,6 @@ void handle_sigint(int sig)
 		exit(0);
 	}
 }
-
 
 int connect_to_server() 
 {
@@ -104,13 +80,7 @@ void event_loop(int sockfd)
 				break;
 			}
 
-			// Strip newline
 			buffer[strcspn(buffer, "\n")] = 0;
-
-			if (strcasecmp(buffer, "HELP") == 0) {
-				helper();
-				continue;
-			}
 
 			if (strcasecmp(buffer, "SHOW_LOGS") == 0) {
 				in_log_mode = 1;
@@ -127,14 +97,9 @@ void event_loop(int sockfd)
 				perror("send");
 				break;
 			}
-
-			if (!in_log_mode) {
-				printf("admin> ");
-				fflush(stdout);
-			}
 		}
 
-		// Handle server messages (logs or responses)
+		// Handle server messages
 		if (fds[1].revents & POLLIN) {
 			ssize_t n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
 			if (n <= 0) {
@@ -150,11 +115,11 @@ void event_loop(int sockfd)
 			printf("%s", buffer);
 			fflush(stdout);
 
-
-			if (!in_log_mode) {
-				printf("admin> ");
-				fflush(stdout);
-			}
+			// REMOVE prompt printing here (server sends it)
+			// if (!in_log_mode) {
+			//     printf("admin> ");
+			//     fflush(stdout);
+			// }
 		}
 
 		if (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
@@ -171,10 +136,13 @@ int main()
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sigaction(SIGINT, &sa, NULL);
+
 	int sockfd = connect_to_server();
+	sockfd_global = sockfd;
+
 	printf("Connected to admin server at %s\n", SOCKET_PATH);
-	printf("Type HELP to see available commands.\n");
 	event_loop(sockfd);
+
 	close(sockfd);
 	return 0;
 }
