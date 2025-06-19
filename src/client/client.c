@@ -1,5 +1,3 @@
-#include "client.h"
-#include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,298 +5,556 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <poll.h>
+#include <pthread.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/time.h>
+#include "protocol.h"
+#include "common.h"
+#include "menu.h"
+#include "ffmpeg_commands.h"
 
-int client_init(PCDClient *client, const char *server_ip) {
-    // Create UDP socket
-    client->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (client->udp_sock < 0) {
-        perror("socket");
-        return -1;
+#define SERVER_IP "127.0.0.1"
+#define BUFFER_SIZE 4096
+#define MAX_RETRIES 3
+#define UPLOAD_TIMEOUT 10
+#define RESPONSE_TIMEOUT 5
+#define JOB_RESULT_TIMEOUT 30 // New timeout for JOB_RESULT
+
+uint8_t client_id[16];
+uint32_t next_message_id = 1;
+struct sockaddr_in server_addr;
+int sockfd;
+int download_sockfd;
+pthread_t heartbeat_tid;
+
+int upload_file(uint32_t job_id, const char *filename); // Updated declaration
+void download_file(uint32_t job_id, const char *filename);
+void send_heartbeat(void);
+void* heartbeat_thread(void *arg);
+
+int init_udp_socket() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
     }
-
-    // Set server address
-    memset(&client->server_addr, 0, sizeof(client->server_addr));
-    client->server_addr.sin_family = AF_INET;
-    client->server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, server_ip, &client->server_addr.sin_addr) <= 0) {
-        perror("inet_pton");
-        close(client->udp_sock);
-        return -1;
+    
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
+        perror("invalid server address");
+        exit(EXIT_FAILURE);
     }
-
-    client->connected = false;
-    memset(client->client_id, 0, 16);
-
-    return 0;
+    
+    return sock;
 }
 
-int request_client_id(PCDClient *client) {
-    ClientIdReq req = {
+void get_client_id() {
+    ClientIdRequest req = {
         .type = CLIENT_ID_REQ,
-        .message_id = 1
+        .message_id = next_message_id++
     };
-
-    if (sendto(client->udp_sock, &req, sizeof(req), 0,
-              (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto");
-        return -1;
+    
+    for (int retry = 0; retry < MAX_RETRIES; retry++) {
+        if (sendto(sockfd, &req, sizeof(req), 0, 
+                  (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+            perror("sendto failed");
+            continue;
+        }
+        
+        uint8_t buffer[BUFFER_SIZE];
+        socklen_t addr_len = sizeof(server_addr);
+        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, 
+                            (struct sockaddr *)&server_addr, &addr_len);
+        
+        if (n >= (ssize_t)sizeof(ClientIdResponse)) {
+            ClientIdResponse *resp = (ClientIdResponse *)buffer;
+            memcpy(client_id, resp->client_id, 16);
+            printf("Got client ID: ");
+            for (int i = 0; i < 16; i++) printf("%02x", client_id[i]);
+            printf("\n");
+            return;
+        }
     }
+    
+    fprintf(stderr, "Failed to get client ID after %d retries\n", MAX_RETRIES);
+    exit(EXIT_FAILURE);
+}
 
-    // Wait for response
-    struct pollfd fds[1];
-    fds[0].fd = client->udp_sock;
-    fds[0].events = POLLIN;
-
-    char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000); // 5 second timeout
-    if (ret <= 0) {
-        printf("Timeout waiting for client ID\n");
-        return -1;
+void send_heartbeat() {
+    Heartbeat hb = {
+        .type = HEARTBEAT
+    };
+    memcpy(hb.client_id, client_id, 16);
+    
+    if (sendto(sockfd, &hb, sizeof(hb), 0, 
+              (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("heartbeat send failed");
     }
+}
 
-    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
-    if (n < 0) {
-        perror("recvfrom");
-        return -1;
+void* heartbeat_thread(void *arg) {
+    (void)arg;
+    
+    while (1) {
+        send_heartbeat();
+        sleep(HEARTBEAT_INTERVAL);
     }
+    return NULL;
+}
 
-    if (n >= (ssize_t)sizeof(ClientIdAck) && buffer[0] == CLIENT_ID_ACK) {
-        ClientIdAck *ack = (ClientIdAck *)buffer;
-        memcpy(client->client_id, ack->client_id, 16);
-        client->connected = true;  // THIS WAS MISSING
-        printf("Received client ID from server\n");
+uint32_t submit_job(const char *command, const char **files, int file_count) {
+    if (!command || !files || file_count <= 0) {
+        fprintf(stderr, "[DEBUG] Invalid job parameters\n");
         return 0;
     }
 
-    printf("Invalid response from server\n");
-    return -1;
-}
-
-void client_cleanup(PCDClient *client) {
-    if (client->udp_sock > 0) {
-        close(client->udp_sock);
-    }
-    if (client->tcp_sock > 0) {
-        close(client->tcp_sock);
-    }
-}
-
-int submit_job(PCDClient *client, const char *command, uint8_t file_count) {
-    if (!client->connected) {
-        fprintf(stderr, "Client not connected\n");
-        return -1;
+    uint32_t job_id = rand();
+    size_t cmd_len = strlen(command);
+    
+    if (cmd_len >= MAX_CMD_LEN) {
+        fprintf(stderr, "[DEBUG] Command too long (max %d chars)\n", MAX_CMD_LEN-1);
+        return 0;
     }
 
-    printf("Preparing job request...\n");
-    JobReq req = {
-        .type = JOB_REQ,
-        .message_id = 2,  // Should increment for each request
-        .file_count = file_count,
-        .cmd_len = (uint16_t)strlen(command)
-    };
-    memcpy(req.client_id, client->client_id, 16);
-     // TODO: generate job_id
-    strncpy(req.job_command, command, MAX_CMD_LEN);
+    printf("[DEBUG] Submitting job %u with command: %s\n", job_id, command);
 
-    printf("Sending job request...\n");
-    if (sendto(client->udp_sock, &req, sizeof(req), 0,
-              (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto failed");
-        return -1;
+    size_t req_size = sizeof(JobRequest) + cmd_len;
+    uint8_t *buffer = malloc(req_size + 1);
+    if (!buffer) {
+        perror("[DEBUG] malloc failed");
+        return 0;
+    }
+    memset(buffer, 0, req_size + 1);
+
+    JobRequest *req = (JobRequest *)buffer;
+    req->type = JOB_REQ;
+    req->message_id = next_message_id++;
+    memcpy(req->client_id, client_id, 16);
+    req->job_id = job_id;
+    req->file_count = file_count;
+    req->cmd_len = cmd_len;
+    memcpy(buffer + sizeof(JobRequest), command, cmd_len);
+
+    if (sendto(sockfd, buffer, req_size, 0, 
+              (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("[DEBUG] sendto failed");
+        free(buffer);
+        return 0;
+    }
+    free(buffer);
+
+    uint8_t resp_buffer[BUFFER_SIZE];
+    socklen_t addr_len = sizeof(server_addr);
+    struct timeval tv = { .tv_sec = RESPONSE_TIMEOUT, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    printf("[DEBUG] Waiting for JOB_ACK for job %u\n", job_id);
+    ssize_t n = recvfrom(sockfd, resp_buffer, BUFFER_SIZE, 0, 
+                        (struct sockaddr *)&server_addr, &addr_len);
+
+    if (n < (ssize_t)sizeof(JobResponse)) {
+        fprintf(stderr, "[DEBUG] Invalid JOB_ACK received (size=%zd)\n", n);
+        return 0;
     }
 
-    printf("Waiting for job acknowledgement...\n");
-
-    if (sendto(client->udp_sock, &req, sizeof(req), 0,
-               (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto");
-        return -1;
+    JobResponse *resp = (JobResponse *)resp_buffer;
+    char *message = (char *)(resp_buffer + sizeof(JobResponse));
+    if (resp->msg_len > 0 && resp->msg_len < BUFFER_SIZE - sizeof(JobResponse)) {
+        message[resp->msg_len] = '\0';
+    } else {
+        message[0] = '\0';
     }
 
-    // Wait for JOB_ACK
-    struct pollfd fds[1];
-    fds[0].fd = client->udp_sock;
-    fds[0].events = POLLIN;
+    printf("Job %u: %s\n", resp->job_id, message);
 
-    char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000);
-    if (ret <= 0) {
-        printf("Timeout waiting for job ack\n");
-        return -1;
+    if (resp->status != STATUS_OK) {
+        fprintf(stderr, "[DEBUG] JOB_ACK status not OK (status=%d)\n", resp->status);
+        return 0;
     }
 
-    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
-    if (n < 0) {
-        perror("recvfrom");
-        return -1;
-    }
-
-    if (n >= (ssize_t)sizeof(JobAck) && buffer[0] == JOB_ACK) {
-        JobAck *ack = (JobAck *)buffer;
-        if (ack->status) {
-            return ack->job_id;
+    // Upload files
+    int upload_success = 1;
+    for (int i = 0; i < file_count; i++) {
+        if (files[i]) {
+            printf("[DEBUG] Attempting to upload file %d/%d: %s\n", i+1, file_count, files[i]);
+            if (!upload_file(job_id, files[i])) {
+                fprintf(stderr, "[DEBUG] Upload failed for file %s\n", files[i]);
+                upload_success = 0;
+            }
         }
     }
 
-    return -1;
-}
-
-int request_upload(PCDClient *client, const char *filename, uint64_t file_size, uint32_t job_id) {
-    if (!client->connected) return -1;
-
-    UploadReq req = {
-        .type = UPLOAD_REQ,
-        .message_id = 3,
-        .job_id = job_id,
-        .file_size = file_size,
-        .name_len = (uint8_t)strlen(filename)
-    };
-    memcpy(req.client_id, client->client_id, 16);
-    strncpy(req.filename, filename, MAX_FILENAME_LEN);
-
-    if (sendto(client->udp_sock, &req, sizeof(req), 0,
-               (struct sockaddr *)&client->server_addr, sizeof(client->server_addr)) < 0) {
-        perror("sendto");
-        return -1;
+    if (!upload_success) {
+        fprintf(stderr, "[DEBUG] One or more file uploads failed\n");
+        return 0;
     }
 
-    // Wait for UPLOAD_ACK
-    struct pollfd fds[1];
-    fds[0].fd = client->udp_sock;
-    fds[0].events = POLLIN;
+    // Wait for JOB_RESULT with a timeout
+    tv.tv_sec = JOB_RESULT_TIMEOUT;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    printf("[DEBUG] Waiting for JOB_RESULT for job %u\n", job_id);
 
-    char buffer[BUFFER_SIZE];
-    int ret = poll(fds, 1, 5000);
-    if (ret <= 0) {
-        printf("Timeout waiting for upload ack\n");
-        return -1;
-    }
-
-    ssize_t n = recvfrom(client->udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
-    if (n < 0) {
-        perror("recvfrom");
-        return -1;
-    }
-
-    if (n >= (ssize_t)sizeof(UploadAck) && buffer[0] == UPLOAD_ACK) {
-        UploadAck *ack = (UploadAck *)buffer;
-        if (ack->status) {
-            // Create TCP connection for upload
-            client->tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
-            if (client->tcp_sock < 0) {
-                perror("socket");
-                return -1;
-            }
-
-            struct sockaddr_in upload_addr = client->server_addr;
-            upload_addr.sin_port = htons(ack->tcp_port);
-
-            if (connect(client->tcp_sock, (struct sockaddr *)&upload_addr, sizeof(upload_addr)) < 0) {
-                perror("connect");
-                close(client->tcp_sock);
-                client->tcp_sock = -1;
-                return -1;
-            }
-
+    while (1) {
+        n = recvfrom(sockfd, resp_buffer, BUFFER_SIZE, 0, 
+                    (struct sockaddr *)&server_addr, &addr_len);
+        
+        if (n < 0) {
+            fprintf(stderr, "[DEBUG] Timeout or error waiting for JOB_RESULT: %s\n", strerror(errno));
             return 0;
         }
-    }
 
-    return -1;
-}
-
-int upload_file(PCDClient *client, const char *filename, uint32_t job_id) {
-    (void)job_id; // Mark parameter as used to avoid warning
-    
-    if (client->tcp_sock <= 0) return -1;
-
-    // Open file
-    FILE *file = fopen(filename, "rb");
-    if (!file) {
-        perror("fopen");
-        return -1;
-    }
-
-    // Get file size (even if unused, we'll keep it for future use)
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    (void)file_size; // Mark variable as used to avoid warning
-
-    // Send file data
-    char buffer[4096];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        if (send(client->tcp_sock, buffer, bytes_read, 0) < 0) {
-            perror("send");
-            fclose(file);
-            return -1;
+        if (n > 0 && resp_buffer[0] == JOB_RESULT) {
+            JobResult *result = (JobResult *)resp_buffer;
+            message = (char *)(resp_buffer + sizeof(JobResult));
+            if (result->msg_len > 0 && result->msg_len < BUFFER_SIZE - sizeof(JobResult)) {
+                message[result->msg_len] = '\0';
+            } else {
+                message[0] = '\0';
+            }
+            
+            printf("Job %u result: %s\n", result->job_id, message);
+            if (result->status == STATUS_OK) {
+                return job_id; // Return job_id only if job succeeded
+            } else {
+                fprintf(stderr, "[DEBUG] Job %u failed: %s\n", result->job_id, message);
+                return 0;
+            }
         }
     }
+}
 
-    fclose(file);
-    close(client->tcp_sock);
-    client->tcp_sock = -1;
+int upload_file(uint32_t job_id, const char *filename) {
+    if (!filename || strlen(filename) == 0) {
+        fprintf(stderr, "[DEBUG] Error: Invalid filename\n");
+        return 0;
+    }
+
+    printf("[DEBUG] Uploading file: %s for job %u\n", filename, job_id);
+
+    struct stat st;
+    if (stat(filename, &st) != 0) {
+        fprintf(stderr, "[DEBUG] Error: Cannot access file '%s' - %s\n", filename, strerror(errno));
+        return 0;
+    }
+
+    size_t name_len = strlen(filename);
+    if (name_len > MAX_FILENAME_LEN) {
+        fprintf(stderr, "[DEBUG] Error: Filename too long\n");
+        return 0;
+    }
+
+    size_t req_size = sizeof(UploadRequest) + name_len;
+    uint8_t *buffer = malloc(req_size);
+    if (!buffer) {
+        perror("[DEBUG] Error: malloc failed");
+        return 0;
+    }
+
+    UploadRequest *req = (UploadRequest *)buffer;
+    req->type = UPLOAD_REQ;
+    req->message_id = next_message_id++;
+    memcpy(req->client_id, client_id, 16);
+    req->job_id = job_id;
+    req->file_size = st.st_size;
+    req->name_len = name_len;
+    memcpy(buffer + sizeof(UploadRequest), filename, name_len);
+
+    struct timeval tv;
+    tv.tv_sec = RESPONSE_TIMEOUT;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        printf("[DEBUG] Sending UPLOAD_REQ for %s, attempt %d\n", filename, attempt+1);
+        if (sendto(sockfd, buffer, req_size, 0,
+                  (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+            fprintf(stderr, "[DEBUG] Attempt %d: Send failed - %s\n", attempt+1, strerror(errno));
+            continue;
+        }
+
+        uint8_t resp_buffer[BUFFER_SIZE];
+        socklen_t addr_len = sizeof(server_addr);
+        ssize_t n = recvfrom(sockfd, resp_buffer, BUFFER_SIZE, 0,
+                            (struct sockaddr *)&server_addr, &addr_len);
+
+        if (n < (ssize_t)sizeof(UploadResponse)) {
+            fprintf(stderr, "[DEBUG] Attempt %d: Invalid response size (%zd)\n", attempt+1, n);
+            continue;
+        }
+
+        UploadResponse *resp = (UploadResponse *)resp_buffer;
+        if (resp->status != STATUS_OK) {
+            char *rejected_name = "unknown";
+            if (resp->name_len > 0 && n >= (ssize_t)(sizeof(UploadResponse) + resp->name_len)) {
+                rejected_name = (char *)(resp_buffer + sizeof(UploadResponse));
+                rejected_name[resp->name_len] = '\0';
+            }
+            fprintf(stderr, "[DEBUG] Upload rejected for: %s (Status: %d)\n", rejected_name, resp->status);
+            free(buffer);
+            return 0;
+        }
+
+        if (resp->tcp_port == 0) {
+            fprintf(stderr, "[DEBUG] Error: Server returned invalid port 0\n");
+            free(buffer);
+            return 0;
+        }
+
+        printf("[DEBUG] Server ready on port %d, starting transfer...\n", ntohs(resp->tcp_port));
+
+        int tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (tcp_sock < 0) {
+            perror("[DEBUG] TCP socket failed");
+            free(buffer);
+            return 0;
+        }
+
+        tv.tv_sec = UPLOAD_TIMEOUT;
+        setsockopt(tcp_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        struct sockaddr_in tcp_addr;
+        memcpy(&tcp_addr, &server_addr, sizeof(tcp_addr));
+        tcp_addr.sin_port = resp->tcp_port;
+
+        if (connect(tcp_sock, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
+            fprintf(stderr, "[DEBUG] TCP connect failed: %s\n", strerror(errno));
+            close(tcp_sock);
+            free(buffer);
+            return 0;
+        }
+
+        int file_fd = open(filename, O_RDONLY);
+        if (file_fd < 0) {
+            fprintf(stderr, "[DEBUG] Failed to open %s: %s\n", filename, strerror(errno));
+            close(tcp_sock);
+            free(buffer);
+            return 0;
+        }
+
+        uint8_t file_buffer[4096];
+        ssize_t bytes_read, bytes_sent;
+        size_t total_sent = 0;
+        struct timeval start, current;
+        gettimeofday(&start, NULL);
+
+        while ((bytes_read = read(file_fd, file_buffer, sizeof(file_buffer))) > 0) {
+            bytes_sent = send(tcp_sock, file_buffer, bytes_read, 0);
+            if (bytes_sent <= 0) {
+                fprintf(stderr, "[DEBUG] Send error: %s\n", strerror(errno));
+                break;
+            }
+            total_sent += bytes_sent;
+            
+            gettimeofday(&current, NULL);
+            if (current.tv_sec - start.tv_sec >= 1) {
+                printf("\r[DEBUG] Uploaded: %zu/%zu bytes (%.1f%%)", 
+                      total_sent, st.st_size, (double)total_sent/st.st_size*100);
+                fflush(stdout);
+                start = current;
+            }
+        }
+
+        close(file_fd);
+        close(tcp_sock);
+        free(buffer);
+
+        if (bytes_read < 0) {
+            fprintf(stderr, "[DEBUG] Read error: %s\n", strerror(errno));
+            return 0;
+        }
+
+        printf("\n[DEBUG] Successfully uploaded %s (%zu bytes)\n", filename, total_sent);
+        return 1; // Success
+    }
+
+    fprintf(stderr, "[DEBUG] Upload failed after %d attempts\n", MAX_RETRIES);
+    free(buffer);
     return 0;
 }
 
-
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printf("Usage: %s <server_ip>\n", argv[0]);
-        return 1;
+void download_file(uint32_t job_id, const char *filename) {
+    if (!filename || strlen(filename) == 0) {
+        fprintf(stderr, "[DEBUG] Error: Invalid filename for download\n");
+        return;
     }
 
-    PCDClient client;
-    if (client_init(&client, argv[1]) != 0) {
-        fprintf(stderr, "Failed to initialize client\n");
-        return 1;
+    printf("[DEBUG] Downloading file: %s for job %u\n", filename, job_id);
+
+    size_t name_len = strlen(filename);
+    if (name_len > MAX_FILENAME_LEN) {
+        fprintf(stderr, "[DEBUG] Error: Download filename too long\n");
+        return;
     }
 
-    // Example client workflow:
-    // 1. Get client ID
-    if (request_client_id(&client) != 0) {
-        fprintf(stderr, "Failed to get client ID\n");
-        client_cleanup(&client);
-        return 1;
+    size_t req_size = sizeof(DownloadRequest) + name_len;
+    uint8_t *buffer = malloc(req_size);
+    if (!buffer) {
+        perror("[DEBUG] Error: malloc failed");
+        return;
     }
 
-    printf("Successfully registered with client ID: ");
-    for (int i = 0; i < 16; i++) {
-        printf("%02x", client.client_id[i]);
+    DownloadRequest *req = (DownloadRequest *)buffer;
+    req->type = DOWNLOAD_REQ;
+    req->message_id = next_message_id++;
+    memcpy(req->client_id, client_id, 16);
+    req->job_id = job_id;
+    req->name_len = name_len;
+    memcpy(buffer + sizeof(DownloadRequest), filename, name_len);
+    
+    if (sendto(sockfd, buffer, req_size, 0, 
+          (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("[DEBUG] sendto failed");
+        free(buffer);
+        return;
     }
-    printf("\n");
+    free(buffer);
+    
+    uint8_t resp_buffer[BUFFER_SIZE];
+    socklen_t addr_len = sizeof(server_addr);
+    struct timeval tv = { .tv_sec = RESPONSE_TIMEOUT, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    // 2. Submit a job
-    const char *job_command = "process_image";
-    uint8_t file_count = 1;
-    int job_id = submit_job(&client, job_command, file_count);
-    if (job_id < 0) {
-        fprintf(stderr, "Failed to submit job\n");
-        client_cleanup(&client);
-        return 1;
+    printf("[DEBUG] Waiting for DOWNLOAD_ACK for %s\n", filename);
+    ssize_t n = recvfrom(sockfd, resp_buffer, BUFFER_SIZE, 0, 
+                        (struct sockaddr *)&server_addr, &addr_len);
+    
+    if (n < (ssize_t)sizeof(DownloadResponse)) {
+        fprintf(stderr, "[DEBUG] Invalid DOWNLOAD_ACK received\n");
+        return;
     }
-
-    printf("Job submitted with ID: %d\n", job_id);
-
-    // 3. Upload a file
-    const char *filename = "test.jpg";
-    if (request_upload(&client, filename, 1024, job_id) != 0) {
-        fprintf(stderr, "Failed to request upload\n");
-        client_cleanup(&client);
-        return 1;
+    
+    DownloadResponse *resp = (DownloadResponse *)resp_buffer;
+    char *file_name = (char *)(resp_buffer + sizeof(DownloadResponse));
+    if (resp->name_len > 0 && resp->name_len < BUFFER_SIZE - sizeof(DownloadResponse)) {
+        file_name[resp->name_len] = '\0';
+    } else {
+        file_name[0] = '\0';
     }
-
-    if (upload_file(&client, filename, job_id) != 0) {
-        fprintf(stderr, "Failed to upload file\n");
-        client_cleanup(&client);
-        return 1;
+    
+    if (resp->status != STATUS_OK) {
+        printf("[DEBUG] Download rejected for file: %s (Status: %d)\n", file_name, resp->status);
+        return;
     }
+    
+    int tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_sock < 0) {
+        perror("[DEBUG] TCP socket creation failed");
+        return;
+    }
+    
+    struct sockaddr_in tcp_addr;
+    memcpy(&tcp_addr, &server_addr, sizeof(tcp_addr));
+    tcp_addr.sin_port = htons(SERVER_PORT + 1);
+    
+    printf("[DEBUG] Connecting to server for download on port %d\n", SERVER_PORT + 1);
+    if (connect(tcp_sock, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
+        perror("[DEBUG] TCP connect failed");
+        close(tcp_sock);
+        return;
+    }
+    
+    int file_fd = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (file_fd < 0) {
+        perror("[DEBUG] open failed");
+        close(tcp_sock);
+        return;
+    }
+    
+    uint8_t file_buffer[4096];
+    ssize_t bytes_received;
+    size_t bytes_remaining = resp->file_size;
+    
+    while (bytes_remaining > 0 && 
+           (bytes_received = recv(tcp_sock, file_buffer, 
+                                MIN((size_t)bytes_remaining, sizeof(file_buffer)), 0)) > 0) {
+        if (write(file_fd, file_buffer, bytes_received) != bytes_received) {
+            perror("[DEBUG] write failed");
+            break;
+        }
+        bytes_remaining -= bytes_received;
+    }
+    
+    close(file_fd);
+    close(tcp_sock);
+    if (bytes_remaining == 0) {
+        printf("[DEBUG] Successfully downloaded file: %s (%zu bytes)\n", file_name, resp->file_size);
+    } else {
+        fprintf(stderr, "[DEBUG] Download incomplete: %s\n", file_name);
+    }
+}
 
-    printf("File uploaded successfully\n");
+void process_menu_choice(int choice) {
+    char input_file[MAX_FILENAME_LEN] = {0};
+    char output_file[MAX_FILENAME_LEN] = {0};
+    char command[MAX_CMD_LEN] = {0};
+    const char *files[1] = {input_file};
+    
+    printf("Enter input file: ");
+    scanf("%255s", input_file);
+    printf("Enter output file: ");
+    scanf("%255s", output_file);
+    
+    switch (choice) {
+        case 1: build_trim_command(input_file, output_file, command, sizeof(command)); break;
+        case 2: build_resize_command(input_file, output_file, command, sizeof(command)); break;
+        case 3: build_convert_command(input_file, output_file, command, sizeof(command)); break;
+        case 4: build_extract_audio_command(input_file, output_file, command, sizeof(command)); break;
+        case 5: build_extract_video_command(input_file, output_file, command, sizeof(command)); break;
+        case 6: build_adjust_brightness_command(input_file, output_file, command, sizeof(command)); break;
+        case 7: build_adjust_contrast_command(input_file, output_file, command, sizeof(command)); break;
+        case 8: build_adjust_saturation_command(input_file, output_file, command, sizeof(command)); break;
+        case 9: build_rotate_command(input_file, output_file, command, sizeof(command)); break;
+        case 10: build_crop_command(input_file, output_file, command, sizeof(command)); break;
+        case 11: build_add_watermark_command(input_file, output_file, command, sizeof(command)); break;
+        case 12: build_add_subtitles_command(input_file, output_file, command, sizeof(command)); break;
+        case 13: build_change_speed_command(input_file, output_file, command, sizeof(command)); break;
+        case 14: build_reverse_command(input_file, output_file, command, sizeof(command)); break;
+        case 15: build_extract_frame_command(input_file, output_file, command, sizeof(command)); break;
+        case 16: build_create_gif_command(input_file, output_file, command, sizeof(command)); break;
+        case 17: build_denoise_command(input_file, output_file, command, sizeof(command)); break;
+        case 18: build_stabilize_command(input_file, output_file, command, sizeof(command)); break;
+        case 19: build_merge_command(input_file, output_file, command, sizeof(command)); break;
+        case 20: build_add_audio_command(input_file, output_file, command, sizeof(command)); break;
+        default:
+            printf("Invalid choice\n");
+            return;
+    }
+    
+    printf("Generated command: %s\n", command);
+    uint32_t job_id = submit_job(command, files, 1);
+    if (job_id != 0) {
+        download_file(job_id, output_file);
+    } else {
+        fprintf(stderr, "Job submission failed, download aborted\n");
+    }
+}
 
-    // Cleanup
-    client_cleanup(&client);
-    return 0;
+int main() {
+    srand(time(NULL));
+    sockfd = init_udp_socket();
+    download_sockfd = init_udp_socket();
+    
+    get_client_id();
+    
+    pthread_create(&heartbeat_tid, NULL, heartbeat_thread, NULL);
+    
+    while (1) {
+        display_main_menu();
+        int choice = get_menu_choice();
+        
+        if (choice == 0) {
+            break;
+        }
+        
+        process_menu_choice(choice);
+    }
+    
+    close(sockfd);
+    close(download_sockfd);
+    return EXIT_SUCCESS;
 }

@@ -1,14 +1,13 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -I../common
-LDFLAGS=-luuid
-SRC=client.c
-OBJ=$(SRC:.c=.o)
-TARGET=client
+CC = gcc
+CFLAGS = -Wall -Wextra -Werror -pedantic -pthread -I../shared
+SRC = client.c menu.c ffmpeg_commands.c
+OBJ = $(SRC:.c=.o)
+TARGET = client
 
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
