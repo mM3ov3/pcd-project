@@ -6,14 +6,13 @@ import time
 import os
 
 SERVER_IP = "172.30.46.253"
-
 SERVER_PORT = 5555
 HEARTBEAT_INTERVAL = 15
 UDP_RETRIES = 3
 UDP_TIMEOUT = 3
 
 class VideoClient:
-    def _init_(self, server_ip=SERVER_IP, server_port=SERVER_PORT):
+    def __init__(self, server_ip=SERVER_IP, server_port=SERVER_PORT):
         self.server_ip = server_ip
         self.server_port = server_port
         self.client_id = None
@@ -25,18 +24,17 @@ class VideoClient:
         self.jobs = {}
 
     def send_with_retry(self, packet):
-     for attempt in range(UDP_RETRIES):
-        self.sock.sendto(packet, (self.server_ip, self.server_port))
-        try:
-            data, _ = self.sock.recvfrom(1024)
-            return data
-        except socket.timeout:
-            print(f"[WARN] Timeout, retry {attempt + 1}/{UDP_RETRIES}...")
-        except Exception as e:
-            print(f"[ERROR] Socket error: {e}")
-            return None
-     return None
-
+        for attempt in range(UDP_RETRIES):
+            self.sock.sendto(packet, (self.server_ip, self.server_port))
+            try:
+                data, _ = self.sock.recvfrom(1024)
+                return data
+            except socket.timeout:
+                print(f"[WARN] Timeout, retry {attempt + 1}/{UDP_RETRIES}...")
+            except Exception as e:
+                print(f"[ERROR] Socket error: {e}")
+                return None
+        return None
 
     def send_client_id_req(self):
         msg_id = random.randint(1, 1_000_000)
@@ -266,7 +264,7 @@ def main():
                 ok, ip, port = client.send_upload_request(job_id, input_file)
                 if ok:
                     client.send_file_tcp(ip, port, job_id, input_file)
-                    time.sleep(2)  
+                    time.sleep(2)
                     ok, ip, port, name = client.send_download_request(job_id, output_file)
                     if ok:
                         client.receive_file_tcp(ip, port, name)
@@ -276,6 +274,8 @@ def main():
             ok, ip, port, name = client.send_download_request(job_id, filename)
             if ok:
                 client.receive_file_tcp(ip, port, name)
-if _name_=="_main_":
-    main ()
+
+if __name__ == "__main__":
+    main()
+
 
