@@ -45,6 +45,12 @@ file(GLOB C_ADMIN_CLIENT_SOURCES
 
 
 # ========================================
+# EXTERNAL LIBS
+# ========================================
+find_library(READLINE_LIB readline REQUIRED)
+
+
+# ========================================
 # BUILD TARGETS AND LINKING
 # ========================================
 
@@ -60,7 +66,7 @@ target_link_libraries(server
 # Define c-admin-client executable
 add_executable(c-admin-client ${C_ADMIN_CLIENT_SOURCES})
 # Link c-admin-client to the necessary libs
-# target_link_libraries(c-admin-client 
+target_link_libraries(c-admin-client PRIVATE ${READLINE_LIB})
 #	common)
 
 # C-CLIENT TARGET AND LINKING

@@ -30,7 +30,20 @@ generator.
 | Debian-based      | `sudo apt install cmake`  |
 | Fedora-based      | `sudo dnf install cmake`  |
 
-#### 3. Build, baby, build
+#### 3. Installing Libraries
+
+We are going to need some external libraries, but they should be easily installed
+with a package manager:
+
+| Operating System  | Command to Install libraries  |
+|-------------------|-----------------------------|
+| Debian-based      | `sudo apt install libreadline-dev`  |
+| Fedora-based      | `sudo dnf install readline-devel`   |
+
+External libraries used this far:
+- readline
+
+#### 4. Build, baby, build
 
 Just run the `build.sh` script. 
 
