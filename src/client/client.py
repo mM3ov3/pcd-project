@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 def display_menu():
     print("=============================")
     print("        Video Options        ")

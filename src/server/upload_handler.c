@@ -40,6 +40,7 @@ static int tcp_listen_fd;
 static int active_uploads = 0;
 static pthread_mutex_t active_uploads_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t upload_available = PTHREAD_COND_INITIALIZER;
+
 static pthread_t upload_threads[MAX_UPLOADS];
 
 void init_upload_handler(int listen_fd) {
@@ -51,7 +52,7 @@ void init_upload_handler(int listen_fd) {
 
     printf("[DEBUG] Initializing upload handler, listen_fd=%d\n", listen_fd);
 
-    for (int i = 0; i < MAX_UPLOADS; i++) {
+    for (int i = 0; i < max_uploads; i++) {
         printf("[DEBUG] Creating upload thread %d\n", i);
         pthread_create(&upload_threads[i], NULL, upload_thread_func, NULL);
     }
@@ -65,7 +66,7 @@ static void *upload_thread_func(void *arg) {
     while (1) {
         pthread_mutex_lock(&upload_queue.mutex);
 
-        while (upload_queue.size == 0 || active_uploads >= MAX_UPLOADS) {
+        while (upload_queue.size == 0 || active_uploads >= max_uploads) {
             printf("[DEBUG] Thread %lu waiting: queue size=%d, active_uploads=%d\n",
                    pthread_self(), upload_queue.size, active_uploads);
             pthread_cond_wait(&upload_available, &upload_queue.mutex);

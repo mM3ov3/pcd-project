@@ -1,4 +1,5 @@
 #include "processing.h"
+#include "admin_handler.h"
 #include "job_handler.h"
 #include "server.h"
 #include <stdio.h>
@@ -26,6 +27,12 @@ void process_pending_jobs(int sockfd) {
         if (pending_jobs[i].files_received >= pending_jobs[i].file_count) {
             printf("[DEBUG] Processing job_id=%u, command=%s\n",
                    pending_jobs[i].job_id, pending_jobs[i].command);
+			// Log start of job
+			log_append("[PROCESSING]", "Starting job_id=%u for client_id=0x%02x0x%02x (command='%s')",
+					pending_jobs[i].job_id,
+					pending_jobs[i].client_id[0], pending_jobs[i].client_id[1],
+					pending_jobs[i].command);
+
             
             // Change to job directory
             char dir_path[256];
@@ -42,6 +49,12 @@ void process_pending_jobs(int sockfd) {
             int ret = system(pending_jobs[i].command);
             int status = ret == 0 ? STATUS_OK : STATUS_ERROR;
             const char *msg = ret == 0 ? "Job completed successfully" : "Job execution failed";
+
+			// Log result
+			log_append("[PROCESSING]", "Job_id=%u for client_id=0x%02x0x%02x completed with status=%s",
+					pending_jobs[i].job_id,
+					pending_jobs[i].client_id[0], pending_jobs[i].client_id[1],
+					(status == STATUS_OK ? "OK" : "ERROR"));
             
             // Send JOB_RESULT
             JobResult result;

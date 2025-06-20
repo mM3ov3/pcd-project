@@ -25,8 +25,12 @@
 ClientInfo *clients = NULL;
 size_t client_count = 0;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t max_limits_mutex = PTHREAD_MUTEX_INITIALIZER;
 DownloadQueue download_queue = {0};
 LogQueue global_log_queue;
+
+int max_uploads = MAX_UPLOADS;
+int udp_sock = -1;
 
 void *client_thread(void *arg);
 void *watcher_thread(void *arg);
@@ -37,7 +41,7 @@ void generate_client_id(uint8_t *client_id);
 void cleanup_dead_clients(time_t timeout);
 
 int main() {
-    int udp_sock, tcp_sock, download_sock;
+    int tcp_sock, download_sock;
     struct sockaddr_in server_addr;
     
     // Initialize download queue
@@ -83,7 +87,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
     
-    if (listen(tcp_sock, MAX_UPLOADS) < 0) {
+    if (listen(tcp_sock, max_uploads) < 0) {
         perror("TCP listen failed");
         exit(EXIT_FAILURE);
     }
@@ -95,7 +99,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
     
-    if (listen(download_sock, MAX_UPLOADS) < 0) {
+    if (listen(download_sock, max_uploads) < 0) {
         perror("Download listen failed");
         exit(EXIT_FAILURE);
     }
@@ -185,6 +189,8 @@ void handle_udp_message(int sockfd, struct sockaddr_in *client_addr, uint8_t *bu
             printf("[DEBUG] Assigned client_id=%02x%02x to %s:%d\n",
                    resp.client_id[0], resp.client_id[1],
                    inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));
+	    log_append("[CLIENT]", "Assigned client_id=%02x%02x to %s:%d", resp.client_id[0],
+	           resp.client_id[1], inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));
             
             pthread_mutex_unlock(&clients_mutex);
             
@@ -205,6 +211,8 @@ void handle_udp_message(int sockfd, struct sockaddr_in *client_addr, uint8_t *bu
                     clients[i].addr = *client_addr;
                     printf("[DEBUG] Updated heartbeat for client %02x%02x\n", 
                            hb->client_id[0], hb->client_id[1]);
+		    log_append("[CLIENT]", "Updated hearbeat for client %02x%02x",
+		           hb->client_id[0], hb->client_id[1]);
                     break;
                 }
             }
@@ -234,6 +242,7 @@ void handle_udp_message(int sockfd, struct sockaddr_in *client_addr, uint8_t *bu
             resp.status = create_success ? STATUS_OK : STATUS_ERROR;
             const char *msg = create_success ? "Job created successfully" : "Failed to create job";
             resp.msg_len = strlen(msg);
+
             
             size_t resp_size = sizeof(resp) + resp.msg_len;
             uint8_t *send_buf = malloc(resp_size);
@@ -244,6 +253,14 @@ void handle_udp_message(int sockfd, struct sockaddr_in *client_addr, uint8_t *bu
             memcpy(send_buf, &resp, sizeof(resp));
             memcpy(send_buf + sizeof(resp), msg, resp.msg_len);
             
+
+	    if (resp.status == STATUS_OK)
+	    	log_append("[JOB]", "Job %u for client %02x%02x created succesfully.", resp.job_id,
+		           req -> client_id[0], req -> client_id[1]);
+            else
+	    	log_append("[JOB]", "Job %u for client %02x%02x failed.", resp.job_id,
+		           req -> client_id[0], req -> client_id[1]);
+	    
             printf("[DEBUG] Sending JOB_ACK to %s:%d for job_id=%u, status=%d, msg=%s\n",
                    inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port),
                    resp.job_id, resp.status, msg);

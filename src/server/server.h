@@ -5,6 +5,9 @@
 #include <pthread.h>
 #include <netinet/in.h>
 #include "protocol.h"
+#include "log_queue.h"
+
+#define MAX_UPLOADS 20 
 
 typedef struct {
     uint8_t client_id[16];
@@ -29,10 +32,15 @@ typedef struct {
 } DownloadQueue;
 
 
-
 extern ClientInfo *clients;
 extern size_t client_count;
+extern size_t job_count;
 extern pthread_mutex_t clients_mutex;
+extern pthread_mutex_t max_limits_mutex;
 extern DownloadQueue download_queue;
+
+extern int max_uploads;
+extern int udp_sock;
+
 
 #endif

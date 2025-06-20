@@ -7,26 +7,33 @@
 #include <poll.h>
 #include <errno.h>
 #include <signal.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #define SOCKET_PATH "/tmp/admin.sock"
-#define BUF_SIZE 4096
+#define BUF_SIZE 512
 
 volatile sig_atomic_t in_log_mode = 0;
 int sockfd_global = -1;
+volatile int got_line = 0;
+char *line_buffer = NULL;
 
 void handle_sigint(int sig) 
 {
 	if (in_log_mode) {
+		// Stop logs logic...
 		const char *stop = "STOP_LOGS\n";
 		if (sockfd_global != -1) {
 			send(sockfd_global, stop, strlen(stop), 0);
 		}
 		in_log_mode = 0;
 		printf("\n[Log streaming stopped. You may continue entering commands.]\n");
-		printf("admin> ");
-		fflush(stdout);
+		rl_on_new_line();
+		rl_redisplay();
 	} else {
 		printf("\nExiting.\n");
+		rl_cleanup_after_signal();    // Restore terminal modes before exit
+		rl_callback_handler_remove(); // Remove readline handler cleanly
 		exit(0);
 	}
 }
@@ -55,6 +62,19 @@ int connect_to_server()
 	return sockfd;
 }
 
+void readline_callback(char *line) 
+{
+	if (line == NULL) {
+		printf("EOF, exiting...\n");
+		exit(0);
+	}
+	if (*line) {
+		add_history(line);
+	}
+	line_buffer = line; // Save the line for processing
+	got_line = 1;
+}
+
 void event_loop(int sockfd) 
 {
 	struct pollfd fds[2];
@@ -66,45 +86,63 @@ void event_loop(int sockfd)
 	fds[1].fd = sockfd;
 	fds[1].events = POLLIN;
 
+	ssize_t n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+	if (n <= 0) {
+		fprintf(stderr, "Failed to receive welcome message.\n");
+		return;
+	}
+	buffer[n] = '\0';
+	printf("%s", buffer);  // print the welcome message from server
+
+	rl_callback_handler_install("admin> ", readline_callback);
+
 	while (1) {
 		int ret = poll(fds, 2, -1);
 		if (ret == -1) {
+			if (errno == EINTR) continue;
 			perror("poll");
 			break;
 		}
 
-		// Handle user input
 		if (fds[0].revents & POLLIN) {
-			if (!fgets(buffer, sizeof(buffer), stdin)) {
-				printf("EOF on stdin. Exiting.\n");
+			rl_callback_read_char();
+		}
+
+		if (got_line) {
+			if (!line_buffer) {
+				printf("\nEOF. Exiting.\n");
 				break;
 			}
 
-			buffer[strcspn(buffer, "\n")] = 0;
-
-			if (strcasecmp(buffer, "SHOW_LOGS") == 0) {
+			if (strcasecmp(line_buffer, "SHOW_LOGS") == 0) {
 				in_log_mode = 1;
-			} else if (strcasecmp(buffer, "STOP_LOGS") == 0) {
+			} else if (strcasecmp(line_buffer, "STOP_LOGS") == 0) {
 				in_log_mode = 0;
-			}
-
-			if (strcasecmp(buffer, "EXIT") == 0) {
+			} else if (strcasecmp(line_buffer, "EXIT") == 0) {
+				free(line_buffer);
 				printf("Exiting.\n");
 				break;
 			}
 
-			if (send(sockfd, buffer, strlen(buffer), 0) == -1) {
+			if (send(sockfd, line_buffer, strlen(line_buffer), 0) == -1) {
 				perror("send");
+				free(line_buffer);
 				break;
 			}
+
+			free(line_buffer);
+			line_buffer = NULL;
+			got_line = 0;
+
+			rl_on_new_line();
+			rl_redisplay();
 		}
 
-		// Handle server messages
 		if (fds[1].revents & POLLIN) {
 			ssize_t n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
 			if (n <= 0) {
 				if (n == 0) {
-					printf("Server closed the connection.\n");
+					printf("\nServer closed the connection.\n");
 				} else {
 					perror("recv");
 				}
@@ -112,22 +150,42 @@ void event_loop(int sockfd)
 			}
 
 			buffer[n] = '\0';
+			// Save current line buffer and cursor position
+			char *saved_line = strdup(rl_line_buffer);
+			int saved_point = rl_point;
+
+			// Move to beginning of line and clear it
+			rl_save_prompt();
+			rl_replace_line("", 0);
+			rl_redisplay();
+
+			// Move cursor to new line so output is clean
+			rl_crlf();
 			printf("%s", buffer);
 			fflush(stdout);
 
-			// REMOVE prompt printing here (server sends it)
-			// if (!in_log_mode) {
-			//     printf("admin> ");
-			//     fflush(stdout);
-			// }
+			// Restore the line buffer and cursor
+			rl_restore_prompt();
+			rl_replace_line(saved_line, 1); // 1 = clear undo list
+			rl_point = saved_point;
+			rl_redisplay();
+
+			free(saved_line);
+			if (in_log_mode) {
+				printf("\n[Type STOP_LOGS or Ctrl+C to stop log streaming]\n");
+			}
+			fflush(stdout);
 		}
 
 		if (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-			fprintf(stderr, "Socket error (revents: %d)\n", fds[1].revents);
+			// fprintf(stderr, "\nSocket error, exiting.\n");
 			break;
 		}
 	}
+
+	rl_callback_handler_remove();
 }
+
 
 int main() 
 {
