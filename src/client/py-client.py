@@ -276,6 +276,6 @@ def main():
             ok, ip, port, name = client.send_download_request(job_id, filename)
             if ok:
                 client.receive_file_tcp(ip, port, name)
+if _name_=="_main_":
+    main ()
 
-if _name_ == "_main_":
-    main()
